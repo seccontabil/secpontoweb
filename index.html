@@ -581,18 +581,23 @@
             let period1 = (exit1 > 0 && entry1 > 0) ? (exit1 >= entry1 ? exit1 - entry1 : (1440 - entry1) + exit1) : 0;
             let period2 = (exit2 > 0 && entry2 > 0) ? (exit2 >= entry2 ? exit2 - entry2 : (1440 - entry2) + exit2) : 0;
             const totalWorkedMinutes = period1 + period2;
+            
+            // Lógica do Adicional Noturno
             let nightlyMinutesRaw = calculateNightlyOverlap(entry1, exit1) + calculateNightlyOverlap(entry2, exit2);
-            const nightlyMinutesForPayment = nightlyMinutesRaw * (60 / 52.5);
+            // De acordo com a CLT (Consolidação das Leis do Trabalho) no Brasil, a hora noturna é reduzida.
+            // Cada 52 minutos e 30 segundos de trabalho noturno são computados como 60 minutos (1 hora).
+            // O fator de conversão é 60 / 52.5.
+            const nightlyMinutesComputed = nightlyMinutesRaw * (60 / 52.5);
             
             const balanceTolerance = parseInt(document.getElementById('balance-tolerance').value) || 0;
             const rawBalanceMinutes = totalWorkedMinutes - workloadMinutes;
             const balanceMinutes = Math.abs(rawBalanceMinutes) <= balanceTolerance ? 0 : rawBalanceMinutes;
             
             if (paymentType === 'hourly') {
-                return { totalWorkedMinutes, balanceMinutes: 0, overtime50Minutes: 0, overtime100Minutes: is_holiday ? totalWorkedMinutes : 0, nightlyMinutes: nightlyMinutesForPayment, nightlyMinutesRaw };
+                return { totalWorkedMinutes, balanceMinutes: 0, overtime50Minutes: 0, overtime100Minutes: is_holiday ? totalWorkedMinutes : 0, nightlyMinutes: nightlyMinutesComputed, nightlyMinutesRaw };
             }
 
-            return { totalWorkedMinutes, balanceMinutes, overtime50Minutes: is_holiday ? 0 : Math.max(0, balanceMinutes), overtime100Minutes: is_holiday ? totalWorkedMinutes : 0, nightlyMinutes: nightlyMinutesForPayment, nightlyMinutesRaw };
+            return { totalWorkedMinutes, balanceMinutes, overtime50Minutes: is_holiday ? 0 : Math.max(0, balanceMinutes), overtime100Minutes: is_holiday ? totalWorkedMinutes : 0, nightlyMinutes: nightlyMinutesComputed, nightlyMinutesRaw };
         };
         
         // --- FUNÇÕES DE RENDERIZAÇÃO E UI ---
@@ -793,7 +798,8 @@
                 if (emp.paymentType === 'hourly') {
                     const basePay = ((monthTotals.totalWorked - monthTotals.extra100) / 60) * hourlyRate;
                     const holidayPay = (monthTotals.extra100 / 60) * hourlyRate * 2;
-                    const nightlyBonusValue = (monthTotals.nightlyRaw / 60) * hourlyRate * nightlyPercentage;
+                    // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
+                    const nightlyBonusValue = (monthTotals.nightly / 60) * hourlyRate * nightlyPercentage;
                     totalVariablesDisplay = `Total: ${formatCurrency(basePay + holidayPay + nightlyBonusValue)}`;
                     extra50Display = minutesToTime(0);
                     extra100Display = formatCurrency(holidayPay);
@@ -801,7 +807,8 @@
                 } else {
                     const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
                     const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-                    const nightlyValue = (monthTotals.nightlyRaw / 60) * hourlyRate * nightlyPercentage;
+                    // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
+                    const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * nightlyPercentage;
                     totalVariablesDisplay = formatCurrency(extra50Value + extra100Value + nightlyValue);
                     extra50Display = hourlyRate > 0 ? formatCurrency(extra50Value) : minutesToTime(monthTotals.extra50);
                     extra100Display = hourlyRate > 0 ? formatCurrency(extra100Value) : minutesToTime(monthTotals.extra100);
@@ -1093,7 +1100,8 @@
             const hourlyRate = (employee.paymentType === 'hourly') ? parseFloat(employee.salary || 0) : (parseFloat(employee.salary || 0) / 220);
             const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
             const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-            const nightlyValue = (monthTotals.nightlyRaw / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
+            // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
+            const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
 
             const summaryHtml = `
                 <div class="summary-section">
@@ -1211,7 +1219,8 @@
             const hourlyRate = (employee.paymentType === 'hourly') ? parseFloat(employee.salary || 0) : (parseFloat(employee.salary || 0) / 220);
             const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
             const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-            const nightlyValue = (monthTotals.nightlyRaw / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
+            // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
+            const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
 
             csvRows.push([`Total Horas Trabalhadas:`, minutesToTime(monthTotals.totalWorked)]);
             if(employee.paymentType !== 'hourly') {
@@ -1554,4 +1563,3 @@
     </script>
 </body>
 </html>
-

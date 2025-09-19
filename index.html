@@ -274,7 +274,8 @@
                                         <th class="p-3 text-center">Saldo</th>
                                         <th class="p-3">H.E. 50%</th>
                                         <th class="p-3">H.E. 100%</th>
-                                        <th class="p-3">Ad. Not.</th>
+                                        <th class="p-3">Ad. Not. (Real)</th>
+                                        <th class="p-3">Ad. Not. (Pago)</th>
                                     </tr>
                                 </thead>
                                 <tbody id="timesheet-body" class="divide-y divide-slate-200"></tbody>
@@ -556,17 +557,26 @@
         };
 
         const calculateNightlyOverlap = (workStart, workEnd) => {
-            if (!workStart && !workEnd || workStart === workEnd) return 0;
+            // Esta função não deve ser chamada com horários incompletos. A validação ocorre em calculateDayTotals.
+            if (workStart === workEnd) return 0;
             const nightStart = timeToMinutes(document.getElementById('nightly-start').value);
             const nightEnd = timeToMinutes(document.getElementById('nightly-end').value);
             let totalOverlap = 0;
-            if (nightStart <= nightEnd) {
+            if (nightStart <= nightEnd) { // Caso raro: período noturno não cruza a meia-noite (ex: 01:00-04:00)
                 if (workStart < workEnd) { totalOverlap += calculateIntervalOverlap(workStart, workEnd, nightStart, nightEnd); }
                 else { totalOverlap += calculateIntervalOverlap(workStart, 1440, nightStart, nightEnd); totalOverlap += calculateIntervalOverlap(0, workEnd, nightStart, nightEnd); }
-            } else {
-                const nightPeriod1 = { start: nightStart, end: 1440 }, nightPeriod2 = { start: 0, end: nightEnd };
-                if (workStart < workEnd) { totalOverlap += calculateIntervalOverlap(workStart, workEnd, nightPeriod1.start, nightPeriod1.end); totalOverlap += calculateIntervalOverlap(workStart, workEnd, nightPeriod2.start, nightPeriod2.end); }
-                else { const workPeriod1 = { start: workStart, end: 1440 }, workPeriod2 = { start: 0, end: workEnd }; totalOverlap += calculateIntervalOverlap(workPeriod1.start, workPeriod1.end, nightPeriod1.start, nightPeriod1.end); totalOverlap += calculateIntervalOverlap(workPeriod2.start, workPeriod2.end, nightPeriod2.start, nightPeriod2.end); }
+            } else { // Caso padrão no Brasil: período noturno cruza a meia-noite (ex: 22:00-05:00)
+                const nightPeriod1 = { start: nightStart, end: 1440 }; // 22:00 -> 24:00
+                const nightPeriod2 = { start: 0, end: nightEnd };     // 00:00 -> 05:00
+                if (workStart < workEnd) { // Período de trabalho não cruza a meia-noite
+                    totalOverlap += calculateIntervalOverlap(workStart, workEnd, nightPeriod1.start, nightPeriod1.end); 
+                    totalOverlap += calculateIntervalOverlap(workStart, workEnd, nightPeriod2.start, nightPeriod2.end);
+                } else { // Período de trabalho cruza a meia-noite
+                    const workPeriod1 = { start: workStart, end: 1440 };
+                    const workPeriod2 = { start: 0, end: workEnd };
+                    totalOverlap += calculateIntervalOverlap(workPeriod1.start, workPeriod1.end, nightPeriod1.start, nightPeriod1.end);
+                    totalOverlap += calculateIntervalOverlap(workPeriod2.start, workPeriod2.end, nightPeriod2.start, nightPeriod2.end);
+                }
             }
             return totalOverlap;
         };
@@ -577,13 +587,27 @@
             const workloadMinutes = timeToMinutes(daily_workload);
             if (status === 'absent') return { totalWorkedMinutes: 0, balanceMinutes: -workloadMinutes, overtime50Minutes: 0, overtime100Minutes: 0, nightlyMinutes: 0, nightlyMinutesRaw: 0 };
             if (['day_off', 'certificate'].includes(status)) return { totalWorkedMinutes: 0, balanceMinutes: 0, overtime50Minutes: 0, overtime100Minutes: 0, nightlyMinutes: 0, nightlyMinutesRaw: 0 };
+            
             const entry1 = timeToMinutes(dayData.entry1), exit1 = timeToMinutes(dayData.exit1), entry2 = timeToMinutes(dayData.entry2), exit2 = timeToMinutes(dayData.exit2);
-            let period1 = (exit1 > 0 && entry1 > 0) ? (exit1 >= entry1 ? exit1 - entry1 : (1440 - entry1) + exit1) : 0;
-            let period2 = (exit2 > 0 && entry2 > 0) ? (exit2 >= entry2 ? exit2 - entry2 : (1440 - entry2) + exit2) : 0;
+
+            // Valida se os pares de entrada/saída estão completos para evitar cálculos com horários parciais.
+            const isPair1Complete = dayData.entry1 && dayData.exit1;
+            const isPair2Complete = dayData.entry2 && dayData.exit2;
+            
+            let period1 = isPair1Complete ? (exit1 >= entry1 ? exit1 - entry1 : (1440 - entry1) + exit1) : 0;
+            let period2 = isPair2Complete ? (exit2 >= entry2 ? exit2 - entry2 : (1440 - entry2) + exit2) : 0;
             const totalWorkedMinutes = period1 + period2;
             
             // Lógica do Adicional Noturno
-            let nightlyMinutesRaw = calculateNightlyOverlap(entry1, exit1) + calculateNightlyOverlap(entry2, exit2);
+            let nightlyMinutesRaw = 0;
+            // Calcula o adicional noturno apenas para os períodos de trabalho completos.
+            if (isPair1Complete) {
+                nightlyMinutesRaw += calculateNightlyOverlap(entry1, exit1);
+            }
+            if (isPair2Complete) {
+                nightlyMinutesRaw += calculateNightlyOverlap(entry2, exit2);
+            }
+            
             // De acordo com a CLT (Consolidação das Leis do Trabalho) no Brasil, a hora noturna é reduzida.
             // Cada 52 minutos e 30 segundos de trabalho noturno são computados como 60 minutos (1 hora).
             // O fator de conversão é 60 / 52.5.
@@ -664,7 +688,7 @@
         const renderTimesheet = () => {
             const currentEmployee = state.employees.find(e => e.id === state.currentEmployeeId);
             if (!currentEmployee) {
-                timesheetBody.innerHTML = `<tr><td colspan="13" class="p-4 text-center text-slate-500">Selecione uma empresa e um funcionário para ver os apontamentos.</td></tr>`;
+                timesheetBody.innerHTML = `<tr><td colspan="14" class="p-4 text-center text-slate-500">Selecione uma empresa e um funcionário para ver os apontamentos.</td></tr>`;
                 timesheetSummaryEl.innerHTML = ''; // Limpa o resumo
                 return;
             }
@@ -686,7 +710,7 @@
                 const weekendTextClass = isWeekend ? 'text-red-600' : 'text-slate-500';
 
                 const dayData = state.localTimesheet[dayStr] || {};
-                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes } = calculateDayTotals(dayData, currentEmployee);
+                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes, nightlyMinutesRaw } = calculateDayTotals(dayData, currentEmployee);
                 const status = dayData.status || 'workday';
                 const isWorkday = !['absent', 'day_off', 'certificate'].includes(status);
                 const workloadDisplay = currentEmployee.paymentType === 'hourly' ? 'N/A' : (dayData.daily_workload || currentEmployee.workload);
@@ -705,6 +729,7 @@
                     <td class="p-2 text-center font-semibold ${balanceClass}">${balanceDisplay}</td>
                     <td><input type="text" placeholder="HH:MM" class="manual-input w-24 p-1.5 border border-transparent hover:border-slate-300 focus:border-blue-500 bg-transparent rounded-md" data-day="${dayStr}" data-field="extra50" value="${extra50}" ${!isWorkday ? 'disabled' : ''}></td>
                     <td><input type="text" placeholder="HH:MM" class="manual-input w-24 p-1.5 border border-transparent hover:border-slate-300 focus:border-blue-500 bg-transparent rounded-md" data-day="${dayStr}" data-field="extra100" value="${extra100}" ${!isWorkday ? 'disabled' : ''}></td>
+                    <td class="p-2 text-center text-slate-600">${minutesToTime(nightlyMinutesRaw)}</td>
                     <td><input type="text" placeholder="HH:MM" class="manual-input w-24 p-1.5 border border-transparent hover:border-slate-300 focus:border-blue-500 bg-transparent rounded-md" data-day="${dayStr}" data-field="nightly" value="${nightly}" ${!isWorkday ? 'disabled' : ''}></td>
                 </tr>`;
             }).join('');
@@ -780,7 +805,7 @@
                             <p class="text-2xl font-bold text-slate-800">${minutesToTime(monthTotals.extra100)}</p>
                         </div>
                         <div class="p-4 bg-slate-50 rounded-lg">
-                            <p class="text-sm font-medium text-slate-600">Adic. Noturno</p>
+                            <p class="text-sm font-medium text-slate-600">Adic. Noturno (Pago)</p>
                             <p class="text-2xl font-bold text-slate-800">${minutesToTime(monthTotals.nightly)}</p>
                         </div>
                     </div>
@@ -798,7 +823,6 @@
                 if (emp.paymentType === 'hourly') {
                     const basePay = ((monthTotals.totalWorked - monthTotals.extra100) / 60) * hourlyRate;
                     const holidayPay = (monthTotals.extra100 / 60) * hourlyRate * 2;
-                    // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
                     const nightlyBonusValue = (monthTotals.nightly / 60) * hourlyRate * nightlyPercentage;
                     totalVariablesDisplay = `Total: ${formatCurrency(basePay + holidayPay + nightlyBonusValue)}`;
                     extra50Display = minutesToTime(0);
@@ -807,7 +831,6 @@
                 } else {
                     const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
                     const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-                    // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
                     const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * nightlyPercentage;
                     totalVariablesDisplay = formatCurrency(extra50Value + extra100Value + nightlyValue);
                     extra50Display = hourlyRate > 0 ? formatCurrency(extra50Value) : minutesToTime(monthTotals.extra50);
@@ -1075,7 +1098,7 @@
                 const dayData = timesheetData[dayStr] || {};
                 const date = new Date(state.currentYear, state.currentMonth, day);
                 const dayOfWeek = date.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
-                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes } = calculateDayTotals(dayData, employee);
+                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes, nightlyMinutesRaw } = calculateDayTotals(dayData, employee);
                 
                 const balanceDisplay = employee.paymentType === 'hourly' ? '---' : minutesToTime(balanceMinutes, true);
                 const statusDisplay = statusMap[dayData.status || 'workday'] || 'Trabalho';
@@ -1091,6 +1114,7 @@
                         <td>${balanceDisplay}</td>
                         <td>${dayData.manual_extra50 ? dayData.extra50 : minutesToTime(overtime50Minutes)}</td>
                         <td>${dayData.manual_extra100 ? dayData.extra100 : minutesToTime(overtime100Minutes)}</td>
+                        <td>${minutesToTime(nightlyMinutesRaw)}</td>
                         <td>${dayData.manual_nightly ? dayData.nightly : minutesToTime(nightlyMinutes)}</td>
                     </tr>
                 `;
@@ -1100,7 +1124,6 @@
             const hourlyRate = (employee.paymentType === 'hourly') ? parseFloat(employee.salary || 0) : (parseFloat(employee.salary || 0) / 220);
             const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
             const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-            // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
             const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
 
             const summaryHtml = `
@@ -1111,7 +1134,7 @@
                         ${employee.paymentType !== 'hourly' ? `<span>Saldo Banco de Horas:</span><strong>${minutesToTime(monthTotals.balance, true)}</strong>` : '<span></span><span></span>'}
                         <span>Total H.E. 50%:</span><strong>${minutesToTime(monthTotals.extra50)} (${formatCurrency(extra50Value)})</strong>
                         <span>Total H.E. 100%:</span><strong>${minutesToTime(monthTotals.extra100)} (${formatCurrency(extra100Value)})</strong>
-                        <span>Total Ad. Noturno:</span><strong>${minutesToTime(monthTotals.nightly)} (${formatCurrency(nightlyValue)})</strong>
+                        <span>Total Ad. Noturno (Pago):</span><strong>${minutesToTime(monthTotals.nightly)} (${formatCurrency(nightlyValue)})</strong>
                         <span class="total">Valor Total de Variáveis:</span><strong class="total">${formatCurrency(extra50Value + extra100Value + nightlyValue)}</strong>
                     </div>
                 </div>
@@ -1161,7 +1184,7 @@
                     <table>
                         <thead>
                             <tr>
-                                <th>Dia</th><th>Semana</th><th>Status</th><th>Ent. 1</th><th>Saí. 1</th><th>Ent. 2</th><th>Saí. 2</th><th>Total Trab.</th><th>Saldo</th><th>H.E. 50%</th><th>H.E. 100%</th><th>Ad. Not.</th>
+                                <th>Dia</th><th>Semana</th><th>Status</th><th>Ent. 1</th><th>Saí. 1</th><th>Ent. 2</th><th>Saí. 2</th><th>Total Trab.</th><th>Saldo</th><th>H.E. 50%</th><th>H.E. 100%</th><th>Ad. Not. (Real)</th><th>Ad. Not. (Pago)</th>
                             </tr>
                         </thead>
                         <tbody>${rowsHtml}</tbody>
@@ -1191,7 +1214,7 @@
             csvRows.push([`Período:`, `${monthName} de ${state.currentYear}`]);
             csvRows.push([]); 
 
-            const headers = ["Dia", "Dia da Semana", "Status", "Feriado", "Carga Dia", "Entrada 1", "Saida 1", "Entrada 2", "Saida 2", "Total Trabalhado", "Saldo", "H. Extra 50%", "H. Extra 100%", "Ad. Noturno"];
+            const headers = ["Dia", "Dia da Semana", "Status", "Feriado", "Carga Dia", "Entrada 1", "Saida 1", "Entrada 2", "Saida 2", "Total Trabalhado", "Saldo", "H. Extra 50%", "H. Extra 100%", "Ad. Noturno (Real)", "Ad. Noturno (Pago)"];
             csvRows.push(headers);
 
             Array.from({ length: new Date(state.currentYear, state.currentMonth + 1, 0).getDate() }, (_, i) => i + 1).forEach(day => {
@@ -1199,7 +1222,7 @@
                 const dayData = timesheetData[dayStr] || {};
                 const date = new Date(state.currentYear, state.currentMonth, day);
                 const dayOfWeek = date.toLocaleDateString('pt-BR', { weekday: 'long' });
-                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes } = calculateDayTotals(dayData, employee);
+                const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes, nightlyMinutesRaw } = calculateDayTotals(dayData, employee);
                 const balanceDisplay = employee.paymentType === 'hourly' ? '' : minutesToTime(balanceMinutes, true);
                 const statusDisplay = statusMap[dayData.status || 'workday'] || 'Trabalho';
 
@@ -1209,6 +1232,7 @@
                     minutesToTime(totalWorkedMinutes), balanceDisplay,
                     dayData.manual_extra50 ? dayData.extra50 : minutesToTime(overtime50Minutes),
                     dayData.manual_extra100 ? dayData.extra100 : minutesToTime(overtime100Minutes),
+                    minutesToTime(nightlyMinutesRaw),
                     dayData.manual_nightly ? dayData.nightly : minutesToTime(nightlyMinutes)
                 ]);
             });
@@ -1219,7 +1243,6 @@
             const hourlyRate = (employee.paymentType === 'hourly') ? parseFloat(employee.salary || 0) : (parseFloat(employee.salary || 0) / 220);
             const extra50Value = (monthTotals.extra50 / 60) * hourlyRate * 1.5;
             const extra100Value = (monthTotals.extra100 / 60) * hourlyRate * 2.0;
-            // CORREÇÃO: O cálculo do valor do adicional noturno deve ser baseado nas horas computadas (com a redução), não nas horas brutas.
             const nightlyValue = (monthTotals.nightly / 60) * hourlyRate * (parseFloat(document.getElementById('nightly-percentage').value) / 100);
 
             csvRows.push([`Total Horas Trabalhadas:`, minutesToTime(monthTotals.totalWorked)]);
@@ -1228,7 +1251,7 @@
             }
             csvRows.push([`Total H.E. 50%:`, `${minutesToTime(monthTotals.extra50)} (${formatCurrency(extra50Value)})`]);
             csvRows.push([`Total H.E. 100%:`, `${minutesToTime(monthTotals.extra100)} (${formatCurrency(extra100Value)})`]);
-            csvRows.push([`Total Ad. Noturno:`, `${minutesToTime(monthTotals.nightly)} (${formatCurrency(nightlyValue)})`]);
+            csvRows.push([`Total Ad. Noturno (Pago):`, `${minutesToTime(monthTotals.nightly)} (${formatCurrency(nightlyValue)})`]);
             csvRows.push([`Valor Total de Variáveis:`, formatCurrency(extra50Value + extra100Value + nightlyValue)]);
 
 
@@ -1271,7 +1294,7 @@
                 row.querySelectorAll('.time-input').forEach(i => i.value = ''); 
                 Object.assign(dayData, { entry1: '', exit1: '', entry2: '', exit2: '' }); 
             } 
-            const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes } = calculateDayTotals(dayData, currentEmployee); 
+            const { totalWorkedMinutes, balanceMinutes, overtime50Minutes, overtime100Minutes, nightlyMinutes, nightlyMinutesRaw } = calculateDayTotals(dayData, currentEmployee); 
             if (e.target.classList.contains('manual-input')) { 
                 dayData[`manual_${field}`] = true; 
             } else if (['time-input', 'workload-input', 'status-select'].some(c => e.target.classList.contains(c)) || field === 'is_holiday') { 
@@ -1282,13 +1305,17 @@
             dayData.extra50 = dayData.manual_extra50 ? dayData.extra50 : minutesToTime(overtime50Minutes); 
             dayData.extra100 = dayData.manual_extra100 ? dayData.extra100 : minutesToTime(overtime100Minutes); 
             dayData.nightly = dayData.manual_nightly ? dayData.nightly : minutesToTime(nightlyMinutes); 
-            row.querySelector('[data-field="extra50"]').value = dayData.extra50; 
-            row.querySelector('[data-field="extra100"]').value = dayData.extra100; 
-            row.querySelector('[data-field="nightly"]').value = dayData.nightly; 
+            
             row.querySelector('td:nth-child(9)').textContent = minutesToTime(totalWorkedMinutes); 
             const balanceCell = row.querySelector('td:nth-child(10)'); 
             balanceCell.textContent = currentEmployee.paymentType === 'hourly' ? 'N/A' : minutesToTime(balanceMinutes, true); 
             balanceCell.className = `p-2 text-center font-semibold ${balanceMinutes < 0 ? 'text-red-500' : 'text-green-600'}`; 
+            
+            row.querySelector('[data-field="extra50"]').value = dayData.extra50; 
+            row.querySelector('[data-field="extra100"]').value = dayData.extra100; 
+            row.querySelector('td:nth-child(13)').textContent = minutesToTime(nightlyMinutesRaw);
+            row.querySelector('[data-field="nightly"]').value = dayData.nightly; 
+
             if (!state.hasUnsavedChanges) { 
                 state.hasUnsavedChanges = true; 
                 updateSaveStatus(); 
@@ -1563,3 +1590,4 @@
     </script>
 </body>
 </html>
+

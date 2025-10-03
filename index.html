@@ -1137,9 +1137,11 @@
             renderReport();
         };
         
-        const generateExportHtml = (employee, company, timesheetData, monthName) => {
-            const timeCellExport = (decimalHours) => `${minutesToTime(decimalToMinutes(decimalHours))} (${formatDecimal(decimalHours)})`;
-            const balanceCellExport = (decimalHours) => `${minutesToTime(decimalToMinutes(decimalHours), true)} (${formatDecimal(decimalHours)})`;
+        const generateExportHtml = (employee, company, timesheetData, monthName, isForPdf = false) => {
+            const timeCellExport = (decimalHours) => isForPdf ? minutesToTime(decimalToMinutes(decimalHours)) : `${minutesToTime(decimalToMinutes(decimalHours))} (${formatDecimal(decimalHours)})`;
+            const balanceCellExport = (decimalHours) => isForPdf ? minutesToTime(decimalToMinutes(decimalHours), true) : `${minutesToTime(decimalToMinutes(decimalHours), true)} (${formatDecimal(decimalHours)})`;
+            const summaryTimeCell = (decimalHours) => `${minutesToTime(decimalToMinutes(decimalHours))} (${formatDecimal(decimalHours)})`;
+            const summaryBalanceCell = (decimalHours) => `${minutesToTime(decimalToMinutes(decimalHours), true)} (${formatDecimal(decimalHours)})`;
 
             const rowsHtml = Array.from({ length: new Date(state.currentYear, state.currentMonth + 1, 0).getDate() }, (_, i) => i + 1).map(day => {
                 const dayStr = String(day).padStart(2, '0');
@@ -1171,12 +1173,12 @@
                 <div class="summary-section">
                     <h3>Resumo do Mês</h3>
                     <div class="summary-grid">
-                        <span>Total Horas Trabalhadas:</span><strong>${timeCellExport(monthTotals.totalWorked)}</strong>
-                        ${employee.paymentType !== 'hourly' ? `<span>Saldo Banco de Horas:</span><strong>${balanceCellExport(monthTotals.balance)}</strong>` : '<span></span><span></span>'}
+                        <span>Total Horas Trabalhadas:</span><strong>${summaryTimeCell(monthTotals.totalWorked)}</strong>
+                        ${employee.paymentType !== 'hourly' ? `<span>Saldo Banco de Horas:</span><strong>${summaryBalanceCell(monthTotals.balance)}</strong>` : '<span></span><span></span>'}
                         <span>Faltas:</span><strong>${monthTotals.absences} dias</strong>
-                        <span>Total H.E. 50%:</span><strong>${timeCellExport(monthTotals.extra50)} (${formatCurrency(extra50Value)})</strong>
-                        <span>Total H.E. 100%:</span><strong>${timeCellExport(monthTotals.extra100)} (${formatCurrency(extra100Value)})</strong>
-                        <span>Total Ad. Noturno (Pago):</span><strong>${timeCellExport(monthTotals.nightly)} (${formatCurrency(nightlyValue)})</strong>
+                        <span>Total H.E. 50%:</span><strong>${summaryTimeCell(monthTotals.extra50)} (${formatCurrency(extra50Value)})</strong>
+                        <span>Total H.E. 100%:</span><strong>${summaryTimeCell(monthTotals.extra100)} (${formatCurrency(extra100Value)})</strong>
+                        <span>Total Ad. Noturno (Pago):</span><strong>${summaryTimeCell(monthTotals.nightly)} (${formatCurrency(nightlyValue)})</strong>
                         <span class="total">Valor Total de Variáveis:</span><strong class="total">${formatCurrency(extra50Value + extra100Value + nightlyValue)}</strong>
                     </div>
                 </div>`;
@@ -1197,11 +1199,12 @@
                         table { width: 100%; border-collapse: collapse; }
                         th, td { border: 1px solid #ccc; padding: 4px; text-align: center; }
                         th { background-color: #f0f4f8; font-weight: 600; font-size: 8pt;}
-                        .summary-section { margin-top: 20px; }
+                        .summary-section { margin-top: 20px; page-break-inside: avoid; }
                         .summary-section h3 { font-size: 12pt; color: #0056b3; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
                         .summary-grid { display: grid; grid-template-columns: auto auto; gap: 5px 15px; width: fit-content; }
                         .summary-grid span { text-align: right; }
                         .summary-grid .total { font-weight: bold; margin-top: 5px; padding-top: 5px; border-top: 1px solid #999;}
+                        @media print { .print-btn { display: none; } }
                     </style>
                 </head>
                 <body>
@@ -1235,12 +1238,13 @@
             const timesheetData = state.timesheets[timesheetId] || {};
             const monthName = monthSelect.options[monthSelect.selectedIndex].text;
 
-            const printHtml = generateExportHtml(employee, company, timesheetData, monthName);
-            const finalHtml = printHtml.replace('</body>', '<button class="print-btn" onclick="window.print()" style="display: block; margin: 20px auto; padding: 10px 20px; font-size: 16px; cursor: pointer;">Imprimir</button></body>');
+            const printHtml = generateExportHtml(employee, company, timesheetData, monthName, true);
             
             const win = window.open('', '_blank');
-            win.document.write(finalHtml);
+            win.document.write(printHtml);
             win.document.close();
+            win.focus();
+            win.print();
         };
         
         const handleXlsExport = () => {
@@ -1251,7 +1255,7 @@
             const timesheetData = state.timesheets[timesheetId] || {};
             const monthName = monthSelect.options[monthSelect.selectedIndex].text;
 
-            const htmlContent = generateExportHtml(employee, company, timesheetData, monthName);
+            const htmlContent = generateExportHtml(employee, company, timesheetData, monthName, false);
             
             const blob = new Blob([htmlContent], { type: 'application/vnd.ms-excel' });
             const url = URL.createObjectURL(blob);
